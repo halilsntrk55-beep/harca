@@ -542,7 +542,7 @@ header{
   <div class="card">
     <div class="sec-title">💰 Aylık <b>Bütçe</b></div>
     <div class="field"><label for="budgetMonth">Bütçe Ayı</label><input id="budgetMonth" type="month" onchange="loadBudget()"></div>
-    <p style="font-size:12px;color:var(--muted);line-height:1.6;margin-top:10px;">Her ayın gelir ve sabit giderlerini ayrı kaydedin. Maaş ve ek ders toplamı ana bütçedir. Hesaplara ayırdığınız pay ana pilden çıkar, ilgili hesap piline geçer. Harcamalar toplam kalan paranızı azaltır.</p>
+    <p style="font-size:12px;color:var(--muted);line-height:1.6;margin-top:10px;">Her ayın gelir ve sabit giderlerini ayrı kaydedin. Maaş ve ek ders toplamı ana bütçedir. Hesaplara ayırdığınız pay ana pilden çıkar, ilgili hesap piline geçer. Harcamalar toplam kalan paranızı azaltır. Eksi kalan tutar sonraki aya otomatik borç devreder; pil %0 altında gösterilmez. Borç hesabı kayıtlı ilk bütçe ayından başlar.</p>
   </div>
   <div id="budgetBatteries" aria-live="polite"></div>
   <form id="budgetForm" onsubmit="event.preventDefault();saveBudget()">
@@ -861,7 +861,8 @@ const BUDGET_KEY=FB_KEY+'_budget';
 const BUDGET_DEFAULTS={salary:0,lessons:0,rent:0,bills:0,cards:0,other:0,cashLimit:0,accountLimit:0,akbankAccountLimit:0,akbankLimit:50000,ziraatLimit:30000,enparaLimit:15000,isLimit:60000};
 const BUDGET_FIELDS=Object.keys(BUDGET_DEFAULTS);
 const WALLET_LIMITS={nakit:'cashLimit','enpara-hesap':'accountLimit','akbank-hesap':'akbankAccountLimit',akbank:'akbankLimit',ziraat:'ziraatLimit',enpara:'enparaLimit',is:'isLimit'};
-const budgetCache=new Map(),budgetPending=new Map();
+const budgetCache=new Map();
+let budgetHistory={},budgetHistoryLoaded=false,budgetHistoryPending=null;
 let budgetRequest=0,budgetMonthLoaded=null,budgetSaving=false,dailyBudgetRequest=0;
 function normalizeBudget(data){
   return Object.fromEntries(BUDGET_FIELDS.map(k=>{
@@ -871,6 +872,23 @@ function normalizeBudget(data){
 }
 function budgetValues(){
   return Object.fromEntries(BUDGET_FIELDS.map(k=>[k,Number(document.getElementById('budget-'+k).value)||0]));
+}
+function carriedDebt(month,items=expenses,history=budgetHistory){
+  const savedMonths=Object.keys(history).filter(m=>/^\d{4}-(0[1-9]|1[0-2])$/.test(m)).sort();
+  if(!savedMonths.length||month<=savedMonths[0])return 0;
+  const first=savedMonths[0];
+  const spentByMonth={};
+  items.forEach(e=>{
+    const m=e.date?.slice(0,7),v=Number(e.amount);
+    if(m>=first&&m<month&&Number.isFinite(v)&&v>=0)spentByMonth[m]=(spentByMonth[m]||0)+v;
+  });
+  const months=[...new Set([...savedMonths,...Object.keys(spentByMonth)])].filter(m=>m>=first&&m<month).sort();
+  let debt=0;
+  months.forEach(m=>{
+    const b=normalizeBudget(history[m]);
+    debt=Math.max(0,debt+b.rent+b.bills+b.cards+b.other+(spentByMonth[m]||0)-b.salary-b.lessons);
+  });
+  return Math.round(debt*100)/100;
 }
 function budgetStats(data,month,items=expenses){
   const b=normalizeBudget(data),income=b.salary+b.lessons,fixed=b.rent+b.bills+b.cards+b.other;
@@ -885,9 +903,11 @@ function budgetStats(data,month,items=expenses){
   const allocated=b.cashLimit+b.accountLimit+b.akbankAccountLimit;
   const accountSpent=byPayment.nakit+byPayment['enpara-hesap']+byPayment['akbank-hesap'];
   const mainSpent=spent-accountSpent;
-  const unallocated=income-fixed-allocated-mainSpent;
+  const debtIn=carriedDebt(month,items);
+  const unallocated=income-debtIn-fixed-allocated-mainSpent;
   const accountRemaining=allocated-accountSpent;
-  return {b,income,fixed,spent,remaining:income-fixed-spent,byPayment,allocated,mainSpent,accountRemaining,unallocated};
+  const remaining=income-debtIn-fixed-spent;
+  return {b,income,fixed,spent,remaining,debtIn,debtOut:Math.max(0,-remaining),byPayment,allocated,mainSpent,accountRemaining,unallocated};
 }
 function batteryMarkup(label,capacity,used,large=false,month=''){
   const remaining=capacity-used;
@@ -897,7 +917,7 @@ function batteryMarkup(label,capacity,used,large=false,month=''){
   return `<div class="${large?'budget-hero':'wallet-card'}" style="--battery-color:${color}">
     <div class="battery-heading"><${large?'h3':'h4'}>${label}</${large?'h3':'h4'}>${month?'<span class="battery-month">'+month+'</span>':''}</div>
     <div class="battery-shell" role="progressbar" aria-label="${label} kalan oran" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}" aria-valuetext="${Math.round(pct)} yüzde, ${fmt(remaining)} TL kalan">
-      <div class="battery-track"><div class="battery-fill" style="width:${pct}%"></div><span class="battery-percent">${noLimit?'—':Math.round(pct)+'%'}</span></div>
+      <div class="battery-track"><div class="battery-fill" style="width:${pct}%"></div><span class="battery-percent">${noLimit?(used>0?'0%':'—'):Math.round(pct)+'%'}</span></div>
     </div>
     <div class="battery-balance">₺${fmt(remaining)} <span style="font-size:11px;font-family:'DM Sans',sans-serif;font-weight:500;">kalan</span></div>
     <div class="battery-caption">${large?'Aylık gelir':'Aylık limit'}: ₺${fmt(capacity)} · ${large?'Ayrılan / kullanılan':'Harcanan'}: ₺${fmt(used)}</div>
@@ -908,8 +928,8 @@ function batteryMarkup(label,capacity,used,large=false,month=''){
 function budgetDashboard(data,month,compact=false){
   const t=budgetStats(data,month);
   const monthLabel=new Date(month+'-01T12:00:00').toLocaleDateString('tr-TR',{month:'long',year:'numeric'});
-  let hero=batteryMarkup('🔋 Ana Bütçe · Dağıtılmamış',t.income,t.fixed+t.allocated+t.mainSpent,true,monthLabel);
-  const flows=`<div class="budget-flow"><div><small>↓ GELİRLER</small><strong style="color:#34d399;">₺${fmt(t.income)}</strong></div><div><small>↑ GİDERLER</small><strong style="color:#f87171;">₺${fmt(t.fixed+t.spent)}</strong></div></div><div class="battery-caption">Sabit gider: ₺${fmt(t.fixed)} · Günlük kayıtlar: ₺${fmt(t.spent)}<br>Hesaplara ayrılan: ₺${fmt(t.allocated)} · Hesaplarda kalan: ₺${fmt(t.accountRemaining)}<br><b style="color:${t.remaining<0?'#f87171':'#34d399'};">Toplam kalan para: ₺${fmt(t.remaining)}</b></div>`;
+  let hero=batteryMarkup('🔋 Ana Bütçe · Dağıtılmamış',t.income,t.debtIn+t.fixed+t.allocated+t.mainSpent,true,monthLabel);
+  const flows=`<div class="budget-flow"><div><small>↓ GELİRLER</small><strong style="color:#34d399;">₺${fmt(t.income)}</strong></div><div><small>↑ GİDERLER</small><strong style="color:#f87171;">₺${fmt(t.fixed+t.spent)}</strong></div></div><div class="battery-caption">Önceki aydan borç: <span class="budget-over">₺${fmt(t.debtIn)}</span><br>Sabit gider: ₺${fmt(t.fixed)} · Günlük kayıtlar: ₺${fmt(t.spent)}<br>Hesaplara ayrılan: ₺${fmt(t.allocated)} · Hesaplarda kalan: ₺${fmt(t.accountRemaining)}<br><b style="color:${t.remaining<0?'#f87171':'#34d399'};">Toplam kalan para: ₺${fmt(t.remaining)}</b><br><span class="${t.debtOut>0?'budget-over':''}">Sonraki aya devredecek borç: ₺${fmt(t.debtOut)}</span><br>Devir tutarı bu ayın mevcut kayıtlarına göre hesaplanır.</div>`;
   const last=hero.lastIndexOf('</div>');
   hero=hero.slice(0,last)+flows+hero.slice(last);
   const wallets=Object.entries(WALLET_LIMITS).map(([key,field])=>batteryMarkup(PAY_META[key].label,t.b[field],t.byPayment[key])).join('');
@@ -922,11 +942,12 @@ function renderBudgetSummary(){
   const b=budgetValues(),t=budgetStats(b,month);
   document.getElementById('budgetBatteries').innerHTML=budgetDashboard(b,month);
   document.getElementById('budgetSummary').innerHTML=[
-    ['Aylık Gelir',t.income,'#34d399'],['Toplam Gider',t.fixed+t.spent,'#f87171'],
+    ['Aylık Gelir',t.income,'#34d399'],['Önceki Aydan Borç',t.debtIn,'#f87171'],
+    ['Toplam Gider',t.fixed+t.spent,'#f87171'],['Sonraki Aya Borç',t.debtOut,'#f87171'],
     ['Toplam Kalan Para',t.remaining,t.remaining<0?'#f87171':'#34d399'],
     ['Ana Pilde Kalan',t.unallocated,t.unallocated<0?'#f87171':'#34d399']
   ].map(([label,value,color])=>`<div class="stat-card"><div class="st-lbl">${label}</div><div class="st-val" style="color:${color};font-size:20px;">₺${fmt(value)}</div></div>`).join('');
-  document.getElementById('budgetReserve').innerHTML='Nakit + Enpara + Akbank için ayrılan: <b>₺'+fmt(t.allocated)+'</b><br>Ana pilde dağıtılmamış: <b class="'+(t.unallocated<0?'budget-over':'')+'">₺'+fmt(t.unallocated)+'</b><br><span class="battery-caption">Ana pil = gelir − sabit gider − hesap payları − kredi kartı ve diğer harcamalar. Hesap harcamaları yalnızca kendi pillerinden düşer. Toplam kalan para = ana pil + üç hesapta kalan para.</span>';
+  document.getElementById('budgetReserve').innerHTML='Nakit + Enpara + Akbank için ayrılan: <b>₺'+fmt(t.allocated)+'</b><br>Ana pilde dağıtılmamış: <b class="'+(t.unallocated<0?'budget-over':'')+'">₺'+fmt(t.unallocated)+'</b><br><span class="battery-caption">Ana pil = gelir − devreden borç − sabit gider − hesap payları − kredi kartı ve diğer harcamalar. Hesap harcamaları yalnızca kendi pillerinden düşer. Toplam kalan para = ana pil + üç hesapta kalan para. Hesaplara pay ayırmak tek başına borç oluşturmaz; toplam kalan para eksiyse sonraki aya borç devreder.</span>';
 }
 function fillBudget(data){
   const b=normalizeBudget(data);
@@ -934,15 +955,17 @@ function fillBudget(data){
   renderBudgetSummary();
 }
 async function fetchMonthBudget(month,refresh=false){
-  if(!refresh&&budgetCache.has(month))return budgetCache.get(month);
-  if(!refresh&&budgetPending.has(month))return budgetPending.get(month);
-  const pending=fireDB.ref(BUDGET_KEY+'/'+month).once('value').then(snap=>{
-    const value=snap.val();
-    budgetCache.set(month,value);
-    return value;
-  });
-  budgetPending.set(month,pending);
-  try{return await pending;}finally{if(budgetPending.get(month)===pending)budgetPending.delete(month);}
+  if(budgetHistoryLoaded&&!refresh)return budgetHistory[month]||null;
+  if(!budgetHistoryPending){
+    budgetHistoryPending=fireDB.ref(BUDGET_KEY).once('value').then(snap=>{
+      budgetHistory=snap.val()||{};
+      budgetHistoryLoaded=true;
+      budgetCache.clear();
+      Object.entries(budgetHistory).forEach(([m,b])=>budgetCache.set(m,b));
+    }).finally(()=>{budgetHistoryPending=null;});
+  }
+  await budgetHistoryPending;
+  return budgetHistory[month]||null;
 }
 async function renderDailyBudget(){
   const month=selDate.slice(0,7),request=++dailyBudgetRequest;
@@ -989,10 +1012,7 @@ async function saveBudget(){
   const data=budgetValues();
   if(Object.values(data).some(v=>!Number.isFinite(v)||v<0))return toast('⚠️ Geçerli, negatif olmayan tutarlar girin');
   const t=budgetStats(data,month);
-  if(t.allocated>Math.max(0,t.income-t.fixed-t.mainSpent)){
-    document.getElementById('budgetStatus').textContent='Nakit, Enpara ve Akbank payları toplamı, gelirden sabit giderler ve kredi kartı harcamaları çıktıktan sonra kalan tutarı aşamaz.';
-    return toast('⚠️ Ana bütçeden fazla pay ayıramazsınız');
-  }
+  // Ana tutar negatif olabilir; gerçek ay sonu açığı sonraki aya taşınır.
   budgetSaving=true;
   document.getElementById('budgetSave').disabled=true;
   document.getElementById('budgetFields').disabled=true;
@@ -1001,8 +1021,9 @@ async function saveBudget(){
   try{
     await fireDB.ref(BUDGET_KEY+'/'+month).set(data);
     budgetCache.set(month,data);
+    budgetHistory[month]=data;
     renderBudgetSummary();renderDailyBudget();
-    document.getElementById('budgetStatus').textContent='Bütçe ve aylık limitler kaydedildi.';
+    document.getElementById('budgetStatus').textContent=t.unallocated<0?'Bütçe kaydedildi. Ana pildeki eksi tutar gösteriliyor; gerçek bütçe açığı sonraki aya borç devreder.':'Bütçe ve aylık limitler kaydedildi.';
     toast('✅ Bütçe kaydedildi');
   }catch(err){
     document.getElementById('budgetStatus').textContent='Bütçe kaydedilemedi. Tutarlar ekranda duruyor; tekrar deneyin.';
