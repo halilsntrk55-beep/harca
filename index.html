@@ -500,6 +500,26 @@ header{
 </div>
 </div>
 
+
+<!-- BÜTÇE -->
+<div id="view-budget" class="view"><div class="wrap">
+  <div class="card">
+    <div class="sec-title">💰 Aylık <b>Bütçe</b></div>
+    <div class="field"><label for="budgetMonth">Bütçe Ayı</label><input id="budgetMonth" type="month" onchange="loadBudget()"></div>
+    <p style="font-size:12px;color:var(--muted);line-height:1.6;margin-top:10px;">Her ayın gelir ve sabit giderlerini ayrı kaydedin. Buradaki tutarlar bütçe planıdır; günlük harcama kayıtlarına eklenmez.</p>
+  </div>
+  <form id="budgetForm" onsubmit="event.preventDefault();saveBudget()">
+    <fieldset id="budgetFields" disabled style="border:0;min-width:0;">
+      <div class="card"><div class="sec-title">📥 <b>Gelirler</b></div><div class="field-row"><div class="field"><label for="budget-salary">Sabit Maaş (₺)</label><input id="budget-salary" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div><div class="field"><label for="budget-lessons">Ek Ders Geliri (₺)</label><input id="budget-lessons" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div></div></div>
+      <div class="card"><div class="sec-title">📤 <b>Sabit Giderler</b></div><div style="display:grid;gap:12px;"><div class="field"><label for="budget-rent">Kira (₺)</label><input id="budget-rent" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div><div class="field"><label for="budget-bills">Faturalar (₺)</label><input id="budget-bills" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div><div class="field"><label for="budget-cards">Kredi Kartları (₺)</label><input id="budget-cards" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div><div class="field"><label for="budget-other">Diğer Sabit Giderler (₺)</label><input id="budget-other" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div></div></div>
+    </fieldset>
+    <div class="stat-grid" id="budgetSummary" aria-live="polite"></div>
+    <p id="budgetStatus" role="status" style="font-size:12px;color:var(--text2);margin-bottom:12px;"></p>
+    <button class="btn-kaydet" id="budgetSave" type="submit" disabled>BÜTÇEYİ KAYDET</button>
+    <button class="ptab" type="button" onclick="loadBudget()" style="width:100%;margin-top:8px;">Kayıtlı bütçeyi yeniden yükle</button>
+  </form>
+</div></div>
+
 <!-- DETAY MODAL -->
 <div class="detay-overlay" id="detayModal">
   <div class="detay-box">
@@ -514,6 +534,7 @@ header{
 <nav class="bottom-nav">
   <button class="bnav-btn active" onclick="switchView('daily',this)"><span class="ni">📅</span>Günlük</button>
   <button class="bnav-btn" onclick="switchView('report',this)"><span class="ni">📊</span>Raporlar</button>
+  <button class="bnav-btn" onclick="switchView('budget',this)"><span class="ni">💰</span>Bütçe</button>
   <button class="bnav-btn" onclick="switchView('ai',this)"><span class="ni">🤖</span>AI Analiz</button>
 </nav>
 <div class="toast" id="toast"></div>
@@ -599,6 +620,7 @@ function switchView(name,btn){
   btn.classList.add('active');
   if(name==='report')renderReport();
   if(name==='ai')renderAiSummary();
+  if(name==='budget'&&!budgetMonthLoaded)loadBudget();
 }
 
 function renderCal(){
@@ -781,6 +803,79 @@ function closeDetay(){
   document.body.style.overflow='';
 }
 document.getElementById('detayModal').addEventListener('click',function(e){if(e.target===this)closeDetay();});
+
+
+/* Aylık bütçe: günlük harcamalardan ayrı Firebase alanı */
+const BUDGET_KEY=FB_KEY+'_budget';
+const BUDGET_FIELDS=['salary','lessons','rent','bills','cards','other'];
+let budgetRequest=0,budgetMonthLoaded=null,budgetSaving=false;
+function budgetValues(){
+  return Object.fromEntries(BUDGET_FIELDS.map(k=>[k,Number(document.getElementById('budget-'+k).value)||0]));
+}
+function renderBudgetSummary(){
+  const b=budgetValues(),income=b.salary+b.lessons,fixed=b.rent+b.bills+b.cards+b.other;
+  const remaining=income-fixed;
+  document.getElementById('budgetSummary').innerHTML=[
+    ['Toplam Gelir',income,'var(--nakit)'],['Sabit Giderler',fixed,'var(--accent3)'],
+    ['Kalan Bütçe',remaining,remaining<0?'#f87171':'var(--accent)']
+  ].map(([label,value,color])=>`<div class="stat-card"><div class="st-lbl">${label}</div><div class="st-val" style="color:${color};font-size:20px;">₺${fmt(value)}</div></div>`).join('');
+}
+function fillBudget(data){
+  BUDGET_FIELDS.forEach(k=>{const v=Number(data?.[k]);document.getElementById('budget-'+k).value=Number.isFinite(v)&&v>=0?v:'';});
+  renderBudgetSummary();
+}
+async function loadBudget(){
+  if(budgetSaving)return;
+  const month=document.getElementById('budgetMonth').value;
+  const request=++budgetRequest;
+  budgetMonthLoaded=null;
+  document.getElementById('budgetFields').disabled=true;
+  document.getElementById('budgetSave').disabled=true;
+  fillBudget({});
+  const status=document.getElementById('budgetStatus');
+  if(!/^\d{4}-\d{2}$/.test(month)){status.textContent='Lütfen bir ay seçin.';return;}
+  status.textContent='Bütçe yükleniyor…';
+  try{
+    const snap=await fireDB.ref(BUDGET_KEY+'/'+month).once('value');
+    if(request!==budgetRequest)return;
+    fillBudget(snap.val()||{});
+    budgetMonthLoaded=month;
+    document.getElementById('budgetFields').disabled=false;
+    document.getElementById('budgetSave').disabled=false;
+    status.textContent=snap.val()?'Kayıtlı bütçe yüklendi.':'Bu ay için gelir ve giderlerinizi girebilirsiniz.';
+  }catch(err){
+    if(request!==budgetRequest)return;
+    status.textContent='Bütçe yüklenemedi. Bağlantınızı kontrol edip yeniden yükleyin.';
+  }
+}
+async function saveBudget(){
+  const month=document.getElementById('budgetMonth').value;
+  if(budgetSaving||budgetMonthLoaded!==month)return;
+  if(!document.getElementById('budgetForm').reportValidity())return;
+  const data=budgetValues();
+  if(Object.values(data).some(v=>!Number.isFinite(v)||v<0))return toast('⚠️ Geçerli, negatif olmayan tutarlar girin');
+  budgetSaving=true;
+  document.getElementById('budgetSave').disabled=true;
+  document.getElementById('budgetFields').disabled=true;
+  document.getElementById('budgetMonth').disabled=true;
+  document.getElementById('budgetStatus').textContent='Kaydediliyor…';
+  try{
+    await fireDB.ref(BUDGET_KEY+'/'+month).set(data);
+    document.getElementById('budgetStatus').textContent='Bütçe kaydedildi.';
+    toast('✅ Bütçe kaydedildi');
+  }catch(err){
+    document.getElementById('budgetStatus').textContent='Bütçe kaydedilemedi. Tutarlar ekranda duruyor; tekrar deneyin.';
+    toast('⚠️ Bütçe kaydedilemedi');
+  }finally{
+    budgetSaving=false;
+    document.getElementById('budgetSave').disabled=false;
+    document.getElementById('budgetFields').disabled=false;
+    document.getElementById('budgetMonth').disabled=false;
+  }
+}
+const budgetToday=new Date();
+document.getElementById('budgetMonth').value=budgetToday.getFullYear()+'-'+String(budgetToday.getMonth()+1).padStart(2,'0');
+renderBudgetSummary();
 
 /* ══ AI ══ */
 function setAiPeriod(p,btn){aiPeriod=p;document.querySelectorAll('.ai-tab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderAiSummary();}
