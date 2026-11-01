@@ -559,6 +559,18 @@ header{
         <p class="budget-note">Kart harcamaları hem ilgili kartın pilinden hem ana bütçeden düşer. Kart limitleri gelir sayılmaz.</p>
         <div style="display:grid;gap:12px;"><div class="field"><label for="budget-akbankLimit">Akbank K.K. Limiti (₺)</label><input id="budget-akbankLimit" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div><div class="field"><label for="budget-ziraatLimit">Ziraat K.K. Limiti (₺)</label><input id="budget-ziraatLimit" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div><div class="field"><label for="budget-enparaLimit">Enpara K.K. Limiti (₺)</label><input id="budget-enparaLimit" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div><div class="field"><label for="budget-isLimit">İş Bankası K.K. Limiti (₺)</label><input id="budget-isLimit" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div></div>
       </div>
+
+      <div class="card">
+        <div class="sec-title">🌱 <b>Birikimler</b></div>
+        <p class="budget-note">Seçili ay için birikimlerinizin toplam değerini TL karşılığıyla girin. Bu alanlar aylık katkıyı değil, mevcut birikim tutarını gösterir.</p>
+        <div style="display:grid;gap:12px;">
+          <div class="field"><label for="budget-savingsFx">💱 Döviz Birikimi · TL Karşılığı</label><input id="budget-savingsFx" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div>
+          <div class="field"><label for="budget-savingsGold">🪙 Altın Birikimi · TL Karşılığı</label><input id="budget-savingsGold" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div>
+          <div class="field"><label for="budget-savingsStocks">📈 Hisse Birikimi · TL Karşılığı</label><input id="budget-savingsStocks" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" oninput="renderBudgetSummary()"></div>
+        </div>
+        <div id="savingsSummary" class="budget-reserve" aria-live="polite"></div>
+        <p class="budget-note">Birikimler ana bütçeden düşülmez; bütçe ve borç hesabına dahil edilmez. Değerler otomatik kur veya fiyat güncellemesi olmadan, girdiğiniz tutarla kaydedilir.</p>
+      </div>
       <p class="budget-note">Kira, fatura veya önceki dönem kart borcunu yukarıya yazdıysanız aynı ödemeyi Günlük bölümüne tekrar girmeyin. Bu ayki kart alışverişlerini Günlük bölümüne kaydedin.</p>
     </fieldset>
     <div class="stat-grid" id="budgetSummary" aria-live="polite"></div>
@@ -858,7 +870,7 @@ document.getElementById('detayModal').addEventListener('click',function(e){if(e.
 
 /* Aylık bütçe, hesap payları ve harcamalardan hesaplanan piller */
 const BUDGET_KEY=FB_KEY+'_budget';
-const BUDGET_DEFAULTS={salary:0,lessons:0,rent:0,bills:0,cards:0,other:0,cashLimit:0,accountLimit:0,akbankAccountLimit:0,akbankLimit:50000,ziraatLimit:30000,enparaLimit:15000,isLimit:60000};
+const BUDGET_DEFAULTS={salary:0,lessons:0,rent:0,bills:0,cards:0,other:0,cashLimit:0,accountLimit:0,akbankAccountLimit:0,akbankLimit:50000,ziraatLimit:30000,enparaLimit:15000,isLimit:60000,savingsFx:0,savingsGold:0,savingsStocks:0};
 const BUDGET_FIELDS=Object.keys(BUDGET_DEFAULTS);
 const WALLET_LIMITS={nakit:'cashLimit','enpara-hesap':'accountLimit','akbank-hesap':'akbankAccountLimit',akbank:'akbankLimit',ziraat:'ziraatLimit',enpara:'enparaLimit',is:'isLimit'};
 const budgetCache=new Map();
@@ -941,6 +953,9 @@ function renderBudgetSummary(){
   if(!/^\d{4}-\d{2}$/.test(month))return;
   const b=budgetValues(),t=budgetStats(b,month);
   document.getElementById('budgetBatteries').innerHTML=budgetDashboard(b,month);
+  const savingsTotal=b.savingsFx+b.savingsGold+b.savingsStocks;
+  document.getElementById('savingsSummary').innerHTML='<span style="font-size:11px;color:var(--muted);">TOPLAM BİRİKİM</span><br><strong style="font-family:Syne,sans-serif;font-size:24px;color:var(--nakit);">₺'+fmt(savingsTotal)+'</strong>';
+
   document.getElementById('budgetSummary').innerHTML=[
     ['Aylık Gelir',t.income,'#34d399'],['Önceki Aydan Borç',t.debtIn,'#f87171'],
     ['Toplam Gider',t.fixed+t.spent,'#f87171'],['Sonraki Aya Borç',t.debtOut,'#f87171'],
