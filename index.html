@@ -8,6 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="./firebase-fallback.js"></script>
 <style>
 :root {
   --bg:      #0d0f14;
@@ -363,6 +364,7 @@ header{
 @media(prefers-reduced-motion:reduce){.battery-fill{transition:none;}}
 
 </style>
+<meta name="theme-color" content="#0d0f14"><link rel="manifest" href="./manifest.webmanifest"><link rel="icon" href="./icon.svg"><link rel="stylesheet" href="./enhancements.css">
 </head>
 <body>
 
@@ -624,7 +626,7 @@ let rPeriod='weekly',rOffset=0,aiPeriod='daily';
 let chartBar=null,chartDough=null;
 let fbLoaded=false;
 
-function todayStr(){return new Date().toISOString().slice(0,10);}
+function todayStr(d=new Date()){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function fmt(n){if(!n)return '0';return Number(n).toLocaleString('tr-TR',{minimumFractionDigits:0,maximumFractionDigits:2});}
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
@@ -747,11 +749,11 @@ function getPeriodRange(){
   if(rPeriod==='weekly'){const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow+rOffset*7);mon.setHours(0,0,0,0);const sun=new Date(mon);sun.setDate(mon.getDate()+6);return{start:mon,end:sun};}
   else{const m=now.getMonth()+rOffset;return{start:new Date(now.getFullYear(),m,1),end:new Date(now.getFullYear(),m+1,0)};}
 }
-function dateRange(s,e){const dates=[],cur=new Date(s);while(cur<=e){dates.push(cur.toISOString().slice(0,10));cur.setDate(cur.getDate()+1);}return dates;}
+function dateRange(s,e){const dates=[],cur=new Date(s);while(cur<=e){dates.push(todayStr(cur));cur.setDate(cur.getDate()+1);}return dates;}
 
 function renderReport(){
   const{start,end}=getPeriodRange();const dates=dateRange(start,end);
-  const sStr=start.toISOString().slice(0,10),eStr=end.toISOString().slice(0,10);
+  const sStr=todayStr(start),eStr=todayStr(end);
   const fmtD=d=>d.toLocaleDateString('tr-TR',{day:'numeric',month:'short'});
   document.getElementById('pLabel').textContent=rPeriod==='weekly'?fmtD(start)+'–'+fmtD(end):start.toLocaleDateString('tr-TR',{month:'long',year:'numeric'});
   const exps=expenses.filter(e=>e.date>=sStr&&e.date<=eStr);
@@ -1059,7 +1061,7 @@ function setAiPeriod(p,btn){aiPeriod=p;document.querySelectorAll('.ai-tab').forE
 
 function getAiDates(p){
   const period=p||aiPeriod;const today=new Date();const count=period==='daily'?1:period==='weekly'?7:30;
-  const dates=[];for(let i=count-1;i>=0;i--){const d=new Date(today);d.setDate(d.getDate()-i);dates.push(d.toISOString().slice(0,10));}return dates;
+  const dates=[];for(let i=count-1;i>=0;i--){const d=new Date(today);d.setDate(d.getDate()-i);dates.push(todayStr(d));}return dates;
 }
 
 function renderAiSummary(){
@@ -1118,8 +1120,12 @@ document.getElementById('fAmount').addEventListener('keydown',e=>{if(e.key==='En
 document.getElementById('fName').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('fAmount').focus();});
 
 document.getElementById('hdrDate').textContent=new Date().toLocaleDateString('tr-TR',{weekday:'long',day:'numeric',month:'long'});
-renderCal(); renderDayPanel();
-load(); // Firebase'den yükle — tamamlanınca tekrar render eder
+renderCal();
+// v2 yükleme, enhancements.js içinde başlatılır
 </script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="./core.js"></script>
+<script src="./enhancements.js"></script>
 </body>
 </html>

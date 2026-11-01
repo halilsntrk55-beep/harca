@@ -1,0 +1,18 @@
+name: Harcama hatırlatıcıları
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+jobs:
+  notify:
+    if: ${{ vars.REMINDERS_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Zamanı gelen bildirimleri gönder
+        env:
+          REMINDER_URL: ${{ secrets.REMINDER_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$REMINDER_URL" && test -n "$CRON_SECRET"
+          curl --fail --silent --show-error --max-time 60 -H "Authorization: Bearer $CRON_SECRET" "$REMINDER_URL/api/remind"
